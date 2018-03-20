@@ -45,7 +45,7 @@ func NewSubscriptionManager(dbPath string) (*SubscriptionManager, error) {
 
 func (manager *SubscriptionManager) CheckFeed(feed string) {
     feedParser := gofeed.NewParser()
-    ticker := time.NewTicker(time.Millisecond * 30000)
+    ticker := time.NewTicker(time.Millisecond * 60000)
     for ; true; <-ticker.C {
         log.Printf("Checking %v", feed)
 
