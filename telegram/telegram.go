@@ -1,12 +1,15 @@
 package telegram
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"feedspammer/subscription"
 )
@@ -66,10 +69,57 @@ func HandleUpdate(responseWriter http.ResponseWriter, request *http.Request, man
 		return
 	}
 
-	if _, err := url.ParseRequestURI(update.Message.Text); err == nil {
-		id := strconv.FormatInt(update.Message.Chat.Id, 10)
-		go manager.Subscribe(update.Message.Text, id, "Telegram")
+	text := update.Message.Text
+	id := strconv.FormatInt(update.Message.Chat.Id, 10)
+
+	if strings.HasPrefix(text, "/") {
+		//	text begins with a /, consider it a command
+		command := strings.ToLower(strings.TrimPrefix(text, "/"))
+		go handleCommand(strings.Split(command, " "), manager, id)
+	} else if _, err := url.ParseRequestURI(text); err == nil {
+		//	text is an uri -> try to subscribe
+		go manager.Subscribe(text, id, "Telegram")
 	}
 
 	responseWriter.WriteHeader(http.StatusNoContent)
+}
+
+func handleCommand(args []string, manager *subscription.SubscriptionManager, chatId string) {
+	if len(args) == 0 {
+		return
+	}
+
+	switch args[0] {
+	case "subscriptions":
+		sendSubscriptions(manager, chatId)
+	case "unsubscribe":
+		if len(args) > 1 {
+			log.Printf("Deleting %v", args[1])
+			manager.Unsubscribe(args[1], chatId)
+			sendSubscriptions(manager, chatId)
+		}
+	}
+}
+
+func sendSubscriptions(manager *subscription.SubscriptionManager, chatId string) {
+	log.Print("Listing subscriptions")
+	subscriptions, err := manager.Subscriptions(chatId)
+	if err != nil {
+		log.Print(err)
+		SendMessage(chatId, "Error reading subscriptions")
+		return
+	}
+
+	if len(subscriptions) == 0 {
+		SendMessage(chatId, "No subscriptions")
+		return
+	}
+
+	var messageBuffer bytes.Buffer
+	for _, subscription := range subscriptions {
+		messageBuffer.WriteString(subscription.FeedUrl)
+		messageBuffer.WriteString("\n")
+	}
+
+	SendMessage(chatId, messageBuffer.String())
 }

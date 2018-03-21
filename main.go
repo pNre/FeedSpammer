@@ -31,7 +31,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	manager.RegisterUpdateHandler(pushSubscriptionUpdate)
+	manager.UpdateHandler = pushSubscriptionUpdate
 	manager.LoadSubscriptions()
 
 	http.HandleFunc("/tg", func(responseWriter http.ResponseWriter, request *http.Request) {

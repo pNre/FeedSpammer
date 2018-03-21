@@ -73,7 +73,7 @@ func (manager *SubscriptionManager) CheckFeed(feed string) {
     }
 }
 
-func (manager *SubscriptionManager) addSubscription(feed string, subscriptionId string, subscriptionType string) {
+func (manager *SubscriptionManager) addSubscription(feed string, subscriberId string, subscriptionType string) {
     feedParser := gofeed.NewParser()
     if _, err := feedParser.ParseURL(feed); err != nil {
         log.Print(err)
@@ -81,7 +81,7 @@ func (manager *SubscriptionManager) addSubscription(feed string, subscriptionId 
     }
 
     subscription := Subscription{
-        Id: subscriptionId,
+        Id: subscriberId,
         TypeId: subscriptionType,
         FeedUrl: feed,
     }
@@ -101,7 +101,7 @@ func (manager *SubscriptionManager) resumeSubscription(feed string) {
     go manager.CheckFeed(feed)
 }
 
-func (manager *SubscriptionManager) Subscribe(feed string, subscriptionId string, subscriptionType string) {
+func (manager *SubscriptionManager) Subscribe(feed string, subscriberId string, subscriptionType string) {
     if strings.HasSuffix(strings.ToLower(feed), "opml") {
         doc, err := opml.NewOPMLFromURL(feed)
         if err != nil {
@@ -110,10 +110,10 @@ func (manager *SubscriptionManager) Subscribe(feed string, subscriptionId string
         }
 
         for _, outline := range doc.Outlines() {
-            manager.addSubscription(outline.XMLURL, subscriptionId, subscriptionType)
+            manager.addSubscription(outline.XMLURL, subscriberId, subscriptionType)
         }
     } else {
-        manager.addSubscription(feed, subscriptionId, subscriptionType)
+        manager.addSubscription(feed, subscriberId, subscriptionType)
     }
 }
 
@@ -131,6 +131,22 @@ func (manager *SubscriptionManager) LoadSubscriptions() error {
     return nil
 }
 
-func (manager *SubscriptionManager) RegisterUpdateHandler(handler func(SubscriptionUpdate)) {
-    manager.UpdateHandler = handler
+func (manager *SubscriptionManager) Subscriptions(subscriberId string) ([]Subscription, error) {
+    var subscriptions []Subscription
+    err := manager.Engine.Table("subscription").Where("id = ?", subscriberId).Find(&subscriptions)
+    return subscriptions, err
+}
+
+func (manager *SubscriptionManager) Unsubscribe(feed string, subscriberId string) error {
+    var subscriptions []Subscription
+    err := manager.Engine.Table("subscription").Where("id = ? AND feed_url = ?", subscriberId, feed).Find(&subscriptions)
+    if err != nil {
+        return err
+    }
+
+    for _, subscription := range subscriptions {
+        manager.Engine.Delete(&subscription)
+    }
+
+    return nil
 }
