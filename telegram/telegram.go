@@ -16,6 +16,8 @@ import (
 
 var apiToken = os.Getenv("TELEGRAM_BOT_TOKEN")
 
+const maxMessageLength = 4096
+
 type Chat struct {
 	Id   int64  `json:"id"`
 	Type string `json:"type"`
@@ -56,9 +58,30 @@ func buildURL(endpoint string, query url.Values) url.URL {
 func SendMessage(chatId string, text string) {
 	query := url.Values{}
 	query.Set("chat_id", chatId)
-	query.Set("text", text)
-	url := buildURL("sendMessage", query)
-	http.Get(url.String())
+
+	messageLength := len(text)
+	for offset := 0; offset < messageLength; {
+		//	slice up until the last newline before maxMessageLength bytes
+		limit := offset + maxMessageLength
+		if limit > messageLength {
+			limit = messageLength
+		} else if lastNewline := strings.LastIndex(text[offset:limit], "\n"); lastNewline >= 0 {
+			limit = offset + lastNewline
+
+			if limit == offset {
+				offset += 1
+				continue
+			}
+		}
+
+		//	send this slice
+		query.Set("text", text[offset:limit])
+		url := buildURL("sendMessage", query)
+		http.Get(url.String())
+
+		//	next
+		offset = limit
+	}
 }
 
 func HandleUpdate(responseWriter http.ResponseWriter, request *http.Request, manager *subscription.SubscriptionManager) {
@@ -94,7 +117,7 @@ func handleCommand(args []string, manager *subscription.SubscriptionManager, cha
 		sendSubscriptions(manager, chatId)
 	case "unsubscribe":
 		if len(args) > 1 {
-			log.Printf("Deleting %v", args[1])
+			log.Printf("Deleting %v\n", args[1])
 			manager.Unsubscribe(args[1], chatId)
 			sendSubscriptions(manager, chatId)
 		}
@@ -102,10 +125,10 @@ func handleCommand(args []string, manager *subscription.SubscriptionManager, cha
 }
 
 func sendSubscriptions(manager *subscription.SubscriptionManager, chatId string) {
-	log.Print("Listing subscriptions")
+	log.Println("Listing subscriptions")
 	subscriptions, err := manager.Subscriptions(chatId)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		SendMessage(chatId, "Error reading subscriptions")
 		return
 	}
