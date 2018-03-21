@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,7 +13,8 @@ import (
 func pushSubscriptionUpdate(update subscription.SubscriptionUpdate) {
 	switch update.Subscription.TypeId {
 	case "Telegram":
-		telegram.SendMessage(update.Subscription.Id, update.Item.Link)
+		message := fmt.Sprintf("%s\n%s", update.Item.Title, update.Item.Link)
+		telegram.SendMessage(update.Subscription.Id, message)
 	default:
 		log.Printf("Unknown type %v for subscription", update.Subscription.TypeId)
 		return
