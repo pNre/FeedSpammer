@@ -3,6 +3,7 @@ package subscription
 import (
 	"log"
 	"strings"
+	"strconv"
 	"time"
 
 	"github.com/gilliek/go-opml/opml"
@@ -13,10 +14,15 @@ import (
 )
 
 type Subscription struct {
-	Id          string
-	TypeId      string
-	FeedUrl     string
-	LastItemUrl string
+	Id 			 int64
+	SubscriberId string
+	TypeId       string
+	FeedUrl      string
+}
+
+type SentItem struct {
+	SubscriptionId int64
+	LastItemUrl    string
 }
 
 type SubscriptionUpdate struct {
@@ -35,6 +41,9 @@ func NewSubscriptionManager(dbPath string) (*SubscriptionManager, error) {
 		return nil, err
 	}
 
+	//	enable foreign keys
+	engine.Query("PRAGMA foreign_keys = ON")
+
 	manager := SubscriptionManager{
 		engine,
 		func(u SubscriptionUpdate) {},
@@ -43,7 +52,7 @@ func NewSubscriptionManager(dbPath string) (*SubscriptionManager, error) {
 	return &manager, nil
 }
 
-func (manager *SubscriptionManager) CheckFeed(feed string) {
+func (manager *SubscriptionManager) checkFeed(feed string) {
 	feedParser := gofeed.NewParser()
 	ticker := time.NewTicker(time.Millisecond * 60000)
 	for ; true; <-ticker.C {
@@ -55,20 +64,31 @@ func (manager *SubscriptionManager) CheckFeed(feed string) {
 			continue
 		}
 
-		var subscriptions []Subscription
-		if err = manager.Engine.Table("subscription").Where("feed_url = ?", feed).Find(&subscriptions); err != nil {
+		latestItem := result.Items[0]
+
+		query := `
+		SELECT subscription.*
+		FROM subscription
+		WHERE subscription.feed_url = ?
+			AND (SELECT COUNT(1)
+			     FROM sent_item
+			     WHERE subscription_id = subscription.id AND last_item_url = ?) = 0
+		`
+		subscriptions, err := manager.Engine.Query(query, feed, latestItem.Link)
+		if err != nil {
 			log.Printf("Checking %v: %v", feed, err)
 			continue
 		}
 
-		for _, subscription := range subscriptions {
-			if result.Items[0].Link == subscription.LastItemUrl {
-				continue
-			}
-			subscription.LastItemUrl = result.Items[0].Link
-			search := Subscription{Id: subscription.Id, TypeId: subscription.TypeId, FeedUrl: subscription.FeedUrl}
-			manager.Engine.Update(&subscription, &search)
-			manager.UpdateHandler(SubscriptionUpdate{subscription, result.Items[0]})
+		for _, subscriptionData := range subscriptions {
+			id, _ := strconv.ParseInt(string(subscriptionData["id"]), 10, 64)
+			subscription := Subscription{
+				id,
+				string(subscriptionData["subscriber_id"]),
+				string(subscriptionData["type_id"]),
+				string(subscriptionData["feed_url"])}
+			manager.UpdateHandler(SubscriptionUpdate{subscription, latestItem})
+			manager.Engine.Insert(&SentItem{id, latestItem.Link})
 		}
 	}
 }
@@ -80,11 +100,7 @@ func (manager *SubscriptionManager) addSubscription(feed string, subscriberId st
 		return
 	}
 
-	subscription := Subscription{
-		Id:      subscriberId,
-		TypeId:  subscriptionType,
-		FeedUrl: feed,
-	}
+	subscription := Subscription{SubscriberId: subscriberId, TypeId: subscriptionType, FeedUrl: feed}
 
 	log.Printf("Adding subscription to %v", feed)
 
@@ -93,12 +109,7 @@ func (manager *SubscriptionManager) addSubscription(feed string, subscriberId st
 		return
 	}
 
-	go manager.CheckFeed(feed)
-}
-
-func (manager *SubscriptionManager) resumeSubscription(feed string) {
-	log.Printf("Resuming %v", feed)
-	go manager.CheckFeed(feed)
+	go manager.checkFeed(feed)
 }
 
 func (manager *SubscriptionManager) Subscribe(feed string, subscriberId string, subscriptionType string) {
@@ -125,7 +136,8 @@ func (manager *SubscriptionManager) LoadSubscriptions() error {
 	}
 
 	for _, feed := range feeds {
-		manager.resumeSubscription(feed)
+		log.Printf("Resuming %v", feed)
+		go manager.checkFeed(feed)
 	}
 
 	return nil
@@ -133,13 +145,13 @@ func (manager *SubscriptionManager) LoadSubscriptions() error {
 
 func (manager *SubscriptionManager) Subscriptions(subscriberId string) ([]Subscription, error) {
 	var subscriptions []Subscription
-	err := manager.Engine.Table("subscription").Where("id = ?", subscriberId).Find(&subscriptions)
+	err := manager.Engine.Table("subscription").Where("subscriber_id = ?", subscriberId).Find(&subscriptions)
 	return subscriptions, err
 }
 
 func (manager *SubscriptionManager) Unsubscribe(feed string, subscriberId string) error {
 	var subscriptions []Subscription
-	err := manager.Engine.Table("subscription").Where("id = ? AND feed_url = ?", subscriberId, feed).Find(&subscriptions)
+	err := manager.Engine.Table("subscription").Where("subscriber_id = ? AND feed_url = ?", subscriberId, feed).Find(&subscriptions)
 	if err != nil {
 		return err
 	}
